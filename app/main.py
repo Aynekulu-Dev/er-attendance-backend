@@ -19,11 +19,17 @@ app = FastAPI(title="Ethiopia Reads Attendance API")
 
 # --- CORS CONFIGURATION ---
 # አዝራሮች እንዲሰሩ ይህ በጣም አስፈላጊ ነው
+aorigins = [
+    "https://er-attendance-frontend.onrender.com",
+    # ለወደፊት Local development ከፈለግክ ይህንን ማከል ትችላለህ፡
+    # "http://localhost:5173", 
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # ፍሮንትኤንድህ ያለበትን አድራሻ ብቻ መፍቀድ ትችላለህ
+    allow_origins=origins,  # ከ "*" ወደ የተለዩ URL-ዎች ቀየርነው
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["*"],    # እንደ አስፈላጊነቱ ["GET", "POST"] ብለህ መገደብ ትችላለህ
     allow_headers=["*"],
 )
 
@@ -78,8 +84,11 @@ def record_attendance(request: schemas.AttendanceRequest, req: Request, db: Sess
     
     # አሁን እነዚህን መረጃዎች ወደ crud ፋንክሽን ማለፍ ትችላለህ
     return crud.record_attendance(db, request, client_ip, user_agent)
-@app.get("/api/admin/analytics")
+# main.py ውስጥ ያለውን ይህንን ክፍል እንዲህ ቀይረው፡
+@app.get("/api/admin/analytics", response_model=schemas.DashboardAnalytics)
 def get_analytics(db: Session = Depends(get_db), current_admin = Depends(get_current_admin)):
+    # crud.get_dashboard_analytics ተግባርህ የሚመልሰው መረጃ ከ DashboardAnalytics schema ጋር 
+    # ቁልፍ በቁልፍ (Key by Key) መመሳሰል አለበት።
     return crud.get_dashboard_analytics(db)
 
 @app.get("/api/admin/export-csv")
