@@ -2,62 +2,52 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 from typing import Optional, List
 
-# ==================== 1. ADMIN SCHEMAS ====================
+# ==================== 1. GENERAL RESPONSE (User-Friendly) ====================
+class GenericResponse(BaseModel):
+    success: bool
+    message: str
+    data: Optional[dict] = None
+
+# ==================== 2. ADMIN SCHEMAS ====================
 class AdminLogin(BaseModel):
-    username: str
-    password: str
+    username: str = Field(..., example="admin")
+    password: str = Field(..., example="secret123")
 
 class Token(BaseModel):
     access_token: str
     token_type: str
 
-class TokenData(BaseModel):
-    username: Optional[str] = None
-
-
-# ==================== 2. VOLUNTEER SCHEMAS ====================
-# አድሚን ቮለንቲየር ሲመዘግብ የሚጠየቀው መረጃ
+# ==================== 3. VOLUNTEER SCHEMAS ====================
 class VolunteerCreate(BaseModel):
     full_name: str
     phone_number: Optional[str] = None
-    team: Optional[str] = "General" 
+    team: str = "General" 
 
 class VolunteerResponse(BaseModel):
-    id: int
     volunteer_id: str
     full_name: str
-    phone_number: Optional[str]
     team: str
-    registered_at: datetime
-    is_eligible_for_certificate: bool
+    # አድሚኑ ሲመዘግብ የሚመለሰው መረጃ
+    message: str = "Volunteer registered successfully!"
 
     class Config:
         from_attributes = True
 
-
-# ==================== 3. ATTENDANCE SCHEMAS ====================
-# Check-in/Check-out ሲደረግ የሚላክ መረጃ
+# ==================== 4. ATTENDANCE SCHEMAS ====================
 class AttendanceRequest(BaseModel):
-    volunteer_id: str
+    volunteer_id: str = Field(..., description="የቮለንቲየሩ ልዩ መታወቂያ (e.g., ER-001)")
     user_lat: float
     user_lon: float
-    action: str  # "check-in" ወይም "check-out"
+    action: str = Field(..., description="'check-in' ወይም 'check-out' ብቻ")
 
-# አቴንዳንስ መረጃ ሲመለስ
-class AttendanceResponse(BaseModel):
-    id: int
-    volunteer_id: str
-    date: str 
-    week_number: int
-    check_in_time: Optional[datetime] = None
-    check_out_time: Optional[datetime] = None
-    status: str
+class AttendanceStatus(BaseModel):
+    success: bool
+    action: str
+    timestamp: datetime
+    volunteer_name: str
+    message: str  # ለምሳሌ፡ "Check-in successful! Welcome back."
 
-    class Config:
-        from_attributes = True
-
-
-# ==================== 4. ANALYTICS / DASHBOARD SCHEMAS ====================
+# ==================== 5. DASHBOARD / ANALYTICS SCHEMAS ====================
 class DailyStats(BaseModel):
     date: str
     present_count: int
@@ -66,11 +56,10 @@ class TeamStats(BaseModel):
     team_name: str
     count: int
 
-# schemas.py ውስጥ እንዲህ አድርገህ አስተካክለው
 class DashboardAnalytics(BaseModel):
     total_volunteers: int
-    today_checkins: int # እነዚህን መጠቀሙን አረጋግጥ
+    today_checkins: int
     today_checkouts: int
-    certified_volunteers_count: int
+    active_now: int  # በስራ ላይ ያሉ
     daily_attendance_trend: List[DailyStats]
     team_distribution: List[TeamStats]

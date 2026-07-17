@@ -118,9 +118,9 @@ def get_current_week_number(db: Session) -> int:
     return min(max(week_number, 1), 7)
 
 # --- 6. VOLUNTEER CRUD ---
-def create_volunteer(db: Session, volunteer: schemas.VolunteerCreate):
+def create_volunteer(db: Session, volunteer: schemas.VolunteerCreate, new_id: str): # new_id ተቀባይ መሆን አለበት
     db_volunteer = models.Volunteer(
-        volunteer_id=volunteer.volunteer_id,
+        volunteer_id=new_id, # በ main.py የመጣውን ID እዚህ ተጠቀም
         full_name=volunteer.full_name,
         phone_number=volunteer.phone_number,
         team=volunteer.team

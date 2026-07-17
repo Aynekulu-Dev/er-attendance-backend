@@ -56,14 +56,13 @@ def login_admin(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = 
 
 @app.post("/api/volunteers", response_model=schemas.VolunteerResponse)
 def register_volunteer(volunteer: schemas.VolunteerCreate, db: Session = Depends(get_db), current_admin = Depends(get_current_admin)):
-    # ID generator logic (ከዚህ ቀደም እንደነበረው)
+    # 1. ID ማመንጨት (Logic)
     last = db.query(models.Volunteer).order_by(models.Volunteer.volunteer_id.desc()).first()
     new_id = f"ER-{(int(last.volunteer_id.split('-')[1]) + 1):03d}" if last else "ER-001"
     
-    new_vol = models.Volunteer(volunteer_id=new_id, full_name=volunteer.full_name, phone_number=volunteer.phone_number, team=volunteer.team)
-    db.add(new_vol)
-    db.commit()
-    db.refresh(new_vol)
+    # 2. CRUD መጠቀም (በአዲሱ ፋንክሽን)
+    new_vol = crud.create_volunteer(db, volunteer, new_id)
+    
     return new_vol
 
 @app.get("/api/volunteers", response_model=List[schemas.VolunteerResponse])
