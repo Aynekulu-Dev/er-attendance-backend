@@ -66,9 +66,10 @@ class TeamStats(BaseModel):
     team_name: str
     count: int
 
+# schemas.py ውስጥ እንዲህ አድርገህ አስተካክለው
 class DashboardAnalytics(BaseModel):
     total_volunteers: int
-    today_checkins: int
+    today_checkins: int # እነዚህን መጠቀሙን አረጋግጥ
     today_checkouts: int
     certified_volunteers_count: int
     daily_attendance_trend: List[DailyStats]
