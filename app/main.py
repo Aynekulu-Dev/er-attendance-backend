@@ -8,6 +8,7 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from fastapi import Request
 
 from .database import engine, Base, get_db
 from . import models, schemas, crud
@@ -70,9 +71,13 @@ def read_volunteers(db: Session = Depends(get_db), current_admin = Depends(get_c
     return db.query(models.Volunteer).all()
 
 @app.post("/api/attendance")
-def record_attendance(request: schemas.AttendanceRequest, db: Session = Depends(get_db)):
-    return crud.record_attendance(db, request)
-
+def record_attendance(request: schemas.AttendanceRequest, req: Request, db: Session = Depends(get_db)):
+    # የ IP አድራሻ እና Device Info ከ Request object መውሰድ
+    client_ip = req.client.host
+    user_agent = req.headers.get("user-agent")
+    
+    # አሁን እነዚህን መረጃዎች ወደ crud ፋንክሽን ማለፍ ትችላለህ
+    return crud.record_attendance(db, request, client_ip, user_agent)
 @app.get("/api/admin/analytics")
 def get_analytics(db: Session = Depends(get_db), current_admin = Depends(get_current_admin)):
     return crud.get_dashboard_analytics(db)
