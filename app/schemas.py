@@ -16,16 +16,12 @@ class TokenData(BaseModel):
 
 
 # ==================== 2. VOLUNTEER SCHEMAS ====================
-# ቮለንቲየር ለመመዝገብ (ለ Admin)
+# አድሚን ቮለንቲየር ሲመዘግብ የሚጠየቀው መረጃ
 class VolunteerCreate(BaseModel):
-    # volunteer_id በባክኤንድ በራስ-ሰር ስለሚመነጭ Optional ሆኗል
-    volunteer_id: Optional[str] = Field(None, example="ER-001")
     full_name: str
     phone_number: Optional[str] = None
-    # Team dropdown ሳይሆን input ስለሚሆን ባዶ ቢተውትም እንዳይበላሽ Optional ሆኗል
     team: Optional[str] = "General" 
 
-# ቮለንቲየር መረጃ ለመመለስ (Response)
 class VolunteerResponse(BaseModel):
     id: int
     volunteer_id: str
@@ -40,21 +36,21 @@ class VolunteerResponse(BaseModel):
 
 
 # ==================== 3. ATTENDANCE SCHEMAS ====================
-# ለአቴንዳንስ ጥያቄ (Check-in/Check-out)
+# Check-in/Check-out ሲደረግ የሚላክ መረጃ
 class AttendanceRequest(BaseModel):
     volunteer_id: str
     user_lat: float
     user_lon: float
     action: str  # "check-in" ወይም "check-out"
 
-# ለአቴንዳንስ ምላሽ (Response)
+# አቴንዳንስ መረጃ ሲመለስ
 class AttendanceResponse(BaseModel):
     id: int
     volunteer_id: str
-    date: str  # ቅርጸቱ፡ YYYY-MM-DD
+    date: str 
     week_number: int
-    check_in_time: Optional[datetime]
-    check_out_time: Optional[datetime]
+    check_in_time: Optional[datetime] = None
+    check_out_time: Optional[datetime] = None
     status: str
 
     class Config:
@@ -62,7 +58,6 @@ class AttendanceResponse(BaseModel):
 
 
 # ==================== 4. ANALYTICS / DASHBOARD SCHEMAS ====================
-# ለአድሚን ዳሽቦርድ ውብ ቻርቶች መረጃዎችን ማደራጃ
 class DailyStats(BaseModel):
     date: str
     present_count: int
@@ -73,9 +68,8 @@ class TeamStats(BaseModel):
 
 class DashboardAnalytics(BaseModel):
     total_volunteers: int
-    active_today: int
-    # ለዳሽቦርድ የሚጠቅመውን ዛሬ የተገኘበትን ቁጥር ለመያዝ
-    today_attendance_count: Optional[int] = 0 
-    certified_volunteers_count: Optional[int] = 0
+    today_checkins: int
+    today_checkouts: int
+    certified_volunteers_count: int
     daily_attendance_trend: List[DailyStats]
     team_distribution: List[TeamStats]
