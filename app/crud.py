@@ -137,10 +137,10 @@ def get_volunteer_by_id(db: Session, volunteer_id: str):
     return db.query(models.Volunteer).filter(models.Volunteer.volunteer_id == volunteer_id).first()
 
 # --- 7. ATTENDANCE CRUD & AUTO-BACKUP INTEGRATION ---
-def record_attendance(db: Session, request: schemas.AttendanceRequest):
+def record_attendance(db: Session, request: schemas.AttendanceRequest, client_ip: str, user_agent: str):
     """
     Check-in ወይም Check-out ሲያደርጉ መረጃ መዝጋቢ።
-    ርቀታቸውን በመለካት ከክልል ውጭ ከሆነ ውድቅ ያደርጋል፣ እንዲሁም በራስ-ሰር CSV ባክአፕ ይጽፋል።
+    የ IP አድራሻን በመመዝገብ Anti-cheat ሎጅክን ያካትታል።
     """
     # 1. ቮለንቲየሩ መኖሩን ማረጋገጥ
     volunteer = get_volunteer_by_id(db, request.volunteer_id)
@@ -152,7 +152,7 @@ def record_attendance(db: Session, request: schemas.AttendanceRequest):
     if distance > ALLOWED_RADIUS_METERS:
         return {
             "status": "error", 
-            "message": f"ከተፈቀደው የካምፕ ክልል ውጭ ነህ! ካለህበት ርቀት፡ {int(distance)} ሜትር (የተፈቀደው፡ {int(ALLOWED_RADIUS_METERS)} ሜትር)"
+            "message": f"ከተፈቀደው የካምፕ ክልል ውጭ ነህ! ካለህበት ርቀት፡ {int(distance)} ሜትር"
         }
 
     today_str = date.today().isoformat()
@@ -164,6 +164,11 @@ def record_attendance(db: Session, request: schemas.AttendanceRequest):
         models.Attendance.date == today_str
     ).first()
 
+    # --- ANTI-CHEAT CHECK ---
+    # አንድ ቮለንቲየር ቀደም ብሎ ከተመዘገበ፣ የመጣው IP አድራሻ ከመጀመሪያው ጋር መመሳሰል አለበት
+    if attendance_record and attendance_record.ip_address and attendance_record.ip_address != client_ip:
+        return {"status": "error", "message": "ይህ መታወቂያ በሌላ ዲቫይስ ጥቅም ላይ ውሏል! እባክዎ የመጀመሪያውን ዲቫይስ ይጠቀሙ።"}
+
     if request.action == "check-in":
         if attendance_record:
             return {"status": "error", "message": "ዛሬ ቀድመህ Check-in አድርገሃል!"}
@@ -173,30 +178,34 @@ def record_attendance(db: Session, request: schemas.AttendanceRequest):
             date=today_str,
             week_number=current_week,
             check_in_time=datetime.utcnow(),
-            status="Present"
+            status="Present",
+            ip_address=client_ip,   # IP መመዝገቢያ
+            device_info=user_agent  # Device info መመዝገቢያ
         )
         db.add(attendance_record)
-        db.commit()
-        db.refresh(attendance_record)
-
+    
     elif request.action == "check-out":
         if not attendance_record:
             return {"status": "error", "message": "መጀመሪያ Check-in ማድረግ አለብህ!"}
         if attendance_record.check_out_time:
             return {"status": "error", "message": "ዛሬ ቀድመህ Check-out አድርገሃል!"}
-            
+        
+        # ቼክ-አውት ሲያደርግም IP እና Device Info ን ያዘምናል (ለተጨማሪ ደህንነት)
         attendance_record.check_out_time = datetime.utcnow()
-        db.commit()
-        db.refresh(attendance_record)
+        attendance_record.ip_address = client_ip
+        attendance_record.device_info = user_agent
 
-    # 3. ለሰርተፍኬት ብቁነቱን በራስ-ሰር መፈተሽ እና ማዘመን
+    db.commit()
+    db.refresh(attendance_record)
+
+    # 3. ለሰርተፍኬት ብቁነቱን ማዘመን
     update_certificate_eligibility(db, request.volunteer_id)
 
-    # 4. መፍትሄ ሀ፦ አውቶማቲክ CSV Backup ማመንጨት (በየቀኑ/በየሰዓቱ አዲስ ዳታ ሲመጣ)
+    # 4. CSV Backup
     append_to_csv_backup(attendance_record, volunteer.full_name, volunteer.team)
 
     return {"status": "success", "data": attendance_record}
-
+    
 # --- 8. DASHBOARD ANALYTICS ---
 def get_dashboard_analytics(db: Session) -> schemas.DashboardAnalytics:
     total_volunteers = db.query(models.Volunteer).count()
