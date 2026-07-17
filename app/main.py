@@ -1,14 +1,13 @@
 import os
 from datetime import datetime, timedelta
 from typing import List
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends, status, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from fastapi import Request
 
 from .database import engine, Base, get_db
 from . import models, schemas, crud
@@ -18,18 +17,17 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(title="Ethiopia Reads Attendance API")
 
 # --- CORS CONFIGURATION ---
-# አዝራሮች እንዲሰሩ ይህ በጣም አስፈላጊ ነው
-aorigins = [
+# እዚህ ጋር 'origins' የሚለውን Variable በትክክል ገለጽነው
+origins = [
     "https://er-attendance-frontend.onrender.com",
-    # ለወደፊት Local development ከፈለግክ ይህንን ማከል ትችላለህ፡
-    # "http://localhost:5173", 
 ]
 
+# እዚህ ጋር 'allow_origins=origins' ብለን በትክክል አስገባነው
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,  # ከ "*" ወደ የተለዩ URL-ዎች ቀየርነው
+    allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],    # እንደ አስፈላጊነቱ ["GET", "POST"] ብለህ መገደብ ትችላለህ
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
@@ -63,13 +61,9 @@ def login_admin(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = 
 
 @app.post("/api/volunteers", response_model=schemas.VolunteerResponse)
 def register_volunteer(volunteer: schemas.VolunteerCreate, db: Session = Depends(get_db), current_admin = Depends(get_current_admin)):
-    # 1. ID ማመንጨት (Logic)
     last = db.query(models.Volunteer).order_by(models.Volunteer.volunteer_id.desc()).first()
     new_id = f"ER-{(int(last.volunteer_id.split('-')[1]) + 1):03d}" if last else "ER-001"
-    
-    # 2. CRUD መጠቀም (በአዲሱ ፋንክሽን)
     new_vol = crud.create_volunteer(db, volunteer, new_id)
-    
     return new_vol
 
 @app.get("/api/volunteers", response_model=List[schemas.VolunteerResponse])
@@ -78,17 +72,12 @@ def read_volunteers(db: Session = Depends(get_db), current_admin = Depends(get_c
 
 @app.post("/api/attendance")
 def record_attendance(request: schemas.AttendanceRequest, req: Request, db: Session = Depends(get_db)):
-    # የ IP አድራሻ እና Device Info ከ Request object መውሰድ
     client_ip = req.client.host
     user_agent = req.headers.get("user-agent")
-    
-    # አሁን እነዚህን መረጃዎች ወደ crud ፋንክሽን ማለፍ ትችላለህ
     return crud.record_attendance(db, request, client_ip, user_agent)
-# main.py ውስጥ ያለውን ይህንን ክፍል እንዲህ ቀይረው፡
+
 @app.get("/api/admin/analytics", response_model=schemas.DashboardAnalytics)
 def get_analytics(db: Session = Depends(get_db), current_admin = Depends(get_current_admin)):
-    # crud.get_dashboard_analytics ተግባርህ የሚመልሰው መረጃ ከ DashboardAnalytics schema ጋር 
-    # ቁልፍ በቁልፍ (Key by Key) መመሳሰል አለበት።
     return crud.get_dashboard_analytics(db)
 
 @app.get("/api/admin/export-csv")
