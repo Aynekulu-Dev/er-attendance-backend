@@ -14,7 +14,12 @@ from . import models, schemas, crud
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Ethiopia Reads Attendance API")
+app = FastAPI(
+    title="Ethiopia Reads Attendance API",
+    docs_url=None,      # /docs (Swagger UI) ሙሉ በሙሉ ጠፍቷል
+    redoc_url=None,     # /redoc ሙሉ በሙሉ ጠፍቷል
+    openapi_url=None,   # /openapi.json (ራው schema) ሙሉ በሙሉ ጠፍቷል
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -92,7 +97,7 @@ def _extract_client_info(request: Request) -> tuple[str, str]:
 
 @app.get("/")
 def root():
-    return {"message": "Ethiopia Reads Attendance API is running. See /docs for the API reference."}
+    return {"message": "Ethiopia Reads Attendance API is running."}
 
 
 @app.post("/api/admin/login", response_model=schemas.Token)
