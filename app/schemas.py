@@ -16,16 +16,11 @@ class TokenData(BaseModel):
 
 
 # ==================== 2. VOLUNTEER SCHEMAS ====================
-# ቮለንቲየር ለመመዝገብ (ለ Admin)
 class VolunteerCreate(BaseModel):
-    # volunteer_id በባክኤንድ በራስ-ሰር ስለሚመነጭ Optional ሆኗል
-    volunteer_id: Optional[str] = Field(None, example="ER-001")
     full_name: str
     phone_number: Optional[str] = None
-    # Team dropdown ሳይሆን input ስለሚሆን ባዶ ቢተውትም እንዳይበላሽ Optional ሆኗል
-    team: Optional[str] = "General" 
+    team: Optional[str] = "General"
 
-# ቮለንቲየር መረጃ ለመመለስ (Response)
 class VolunteerResponse(BaseModel):
     id: int
     volunteer_id: str
@@ -39,30 +34,42 @@ class VolunteerResponse(BaseModel):
         from_attributes = True
 
 
+# NEW: register endpoint's response wrapper - user friendly message + data
+class VolunteerRegisterResponse(BaseModel):
+    status: str = "success"
+    message: str
+    data: VolunteerResponse
+
+
 # ==================== 3. ATTENDANCE SCHEMAS ====================
-# ለአቴንዳንስ ጥያቄ (Check-in/Check-out)
 class AttendanceRequest(BaseModel):
     volunteer_id: str
     user_lat: float
     user_lon: float
     action: str  # "check-in" ወይም "check-out"
 
-# ለአቴንዳንስ ምላሽ (Response)
 class AttendanceResponse(BaseModel):
     id: int
     volunteer_id: str
-    date: str  # ቅርጸቱ፡ YYYY-MM-DD
+    date: str
     week_number: int
-    check_in_time: Optional[datetime]
-    check_out_time: Optional[datetime]
+    check_in_time: Optional[datetime] = None
+    check_out_time: Optional[datetime] = None
     status: str
 
     class Config:
         from_attributes = True
 
 
+# NEW: check-in/check-out endpoint's response wrapper
+# (data is Optional because error cases—e.g. "wrong location"—don't have a record)
+class AttendanceActionResponse(BaseModel):
+    status: str  # "success" or "error"
+    message: str
+    data: Optional[AttendanceResponse] = None
+
+
 # ==================== 4. ANALYTICS / DASHBOARD SCHEMAS ====================
-# ለአድሚን ዳሽቦርድ ውብ ቻርቶች መረጃዎችን ማደራጃ
 class DailyStats(BaseModel):
     date: str
     present_count: int
@@ -71,11 +78,12 @@ class TeamStats(BaseModel):
     team_name: str
     count: int
 
+# NOTE: field names here MUST match exactly what crud.get_dashboard_analytics()
+# constructs, otherwise you'll get a pydantic ValidationError.
 class DashboardAnalytics(BaseModel):
     total_volunteers: int
-    active_today: int
-    # ለዳሽቦርድ የሚጠቅመውን ዛሬ የተገኘበትን ቁጥር ለመያዝ
-    today_attendance_count: Optional[int] = 0 
-    certified_volunteers_count: Optional[int] = 0
+    today_checkins: int
+    today_checkouts: int
+    certified_volunteers_count: int
     daily_attendance_trend: List[DailyStats]
     team_distribution: List[TeamStats]
