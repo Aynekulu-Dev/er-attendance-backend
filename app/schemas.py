@@ -88,6 +88,11 @@ class AttendanceLogRow(BaseModel):
     check_out_device: Optional[str] = None
     ip_mismatch: bool  # check-in IP != check-out IP -> flag for admin review only
 
+    # NEW: same (date, IP, device) used to check in for a DIFFERENT volunteer_id
+    # that same day -> soft-flag only, admin reviews, nothing is auto-blocked
+    # (e.g. siblings legitimately sharing one phone would otherwise look like fraud).
+    shared_device_flag: bool = False
+
 
 # ==================== 4. ANALYTICS / DASHBOARD SCHEMAS ====================
 class DailyStats(BaseModel):
@@ -105,3 +110,4 @@ class DashboardAnalytics(BaseModel):
     certified_volunteers_count: int
     daily_attendance_trend: List[DailyStats]
     team_distribution: List[TeamStats]
+    suspicious_checkins_today: int = 0

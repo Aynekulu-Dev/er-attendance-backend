@@ -51,6 +51,46 @@ def append_to_csv_backup(attendance_record: models.Attendance, volunteer_name: s
         print(f"Error writing to CSV backup: {e}")
 
 
+# --- 2b. SHARED-DEVICE SOFT-FLAG WINDOW ---
+# ተመሳሳይ ስልክ (IP+device) ለ2 የተለያዩ Volunteer ID በቀኑ ውስጥ ጥቅም ላይ ቢውልም፣ በሰዓት ልዩነት
+# (ለምሳሌ ጠዋትና ማታ) ከሆነ ብዙም አያሳስብም - አንድ ቤተሰብ ስልክ እየተጋሩ ሊሆን ይችላል። ስለዚህ flag
+# የሚደረገው ሁለቱ check-in በዚህ የደቂቃ ልዩነት ውስጥ ብቻ ሲፈጸሙ ነው (በአካል እጅ ለእጅ የተላለፈ ስልክ
+# የሚያመለክት ስለሆነ)። ይህ ቁጥር ማስተካከል ቢያስፈልግ ከዚህ ብቻ ይቀየራል።
+SHARED_DEVICE_WINDOW_MINUTES = int(os.getenv("SHARED_DEVICE_WINDOW_MINUTES", "10"))
+
+
+def _compute_shared_device_flags(records) -> set:
+    """
+    records: የ Attendance objects ዝርዝር (check_in_ip, check_in_device, check_in_time,
+    volunteer_id, date ሊኖራቸው ይገባል)።
+
+    ይመልሳል፡ በተመሳሳይ ቀን፣ ተመሳሳይ (IP, device) ግን ለተለያዩ Volunteer ID፣ በ
+    SHARED_DEVICE_WINDOW_MINUTES ውስጥ check-in የተደረገባቸው attendance.id ዎች ስብስብ።
+
+    Soft-flag ብቻ ነው - ምንም አይከለክልም፣ admin ብቻ ለክትትል ይጠቀምበታል።
+    """
+    groups: dict[tuple, list] = {}
+    for r in records:
+        if r.check_in_ip and r.check_in_device and r.check_in_time:
+            key = (r.date, r.check_in_ip, r.check_in_device)
+            groups.setdefault(key, []).append(r)
+
+    window = timedelta(minutes=SHARED_DEVICE_WINDOW_MINUTES)
+    flagged_ids: set = set()
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        for i in range(len(group)):
+            for j in range(i + 1, len(group)):
+                a, b = group[i], group[j]
+                if a.volunteer_id == b.volunteer_id:
+                    continue  # ተመሳሳይ ሰው ብቻ ነው - ችግር የለውም
+                if abs(a.check_in_time - b.check_in_time) <= window:
+                    flagged_ids.add(a.id)
+                    flagged_ids.add(b.id)
+    return flagged_ids
+
+
 # --- 3. የርቀት ማስያ ሎጂክ (Haversine Formula) ---
 def calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     R = 6371000
@@ -143,7 +183,7 @@ def record_attendance(
     if not volunteer:
         return {
             "status": "error",
-            "message": "ይህ የቮለንቲየር መታወቂያ (ID) አልተመዘገበም! እባክህ ID ን አረጋግጥ።",
+            "message": f"«{request.volunteer_id}» የሚባል መታወቂያ አላገኘንም። በትክክል መፃፍህን አረጋግጥ (ለምሳሌ፡ ER-001)፣ ወይም ገና ካልተመዘገብክ አድሚን አነጋግር።",
             "data": None,
         }
 
@@ -151,7 +191,7 @@ def record_attendance(
     if distance > ALLOWED_RADIUS_METERS:
         return {
             "status": "error",
-            "message": f"ከተፈቀደው የካምፕ ክልል ውጭ ነህ! ካለህበት ርቀት፡ {int(distance)} ሜትር (የተፈቀደው፡ {int(ALLOWED_RADIUS_METERS)} ሜትር)",
+            "message": f"ካምፑ አካባቢ አይደለህም (አሁን ካለህበት {int(distance)} ሜትር ይርቃል)። ወደ ካምፑ ግቢ ገብተህ እንደገና ሞክር።",
             "data": None,
         }
 
@@ -167,7 +207,7 @@ def record_attendance(
         if attendance_record:
             return {
                 "status": "error",
-                "message": "ዛሬ ቀድመህ Check-in አድርገሃል!",
+                "message": f"{volunteer.full_name}፣ ዛሬ ቀድሞውኑ Check-in አድርገሃል - ደግመህ ማድረግ አያስፈልግም።",
                 "data": schemas.AttendanceResponse.model_validate(attendance_record),
             }
 
@@ -183,19 +223,19 @@ def record_attendance(
         db.add(attendance_record)
         db.commit()
         db.refresh(attendance_record)
-        friendly_message = f"እንኳን ደህና መጣህ፣ {volunteer.full_name}! Check-in በተሳካ ሁኔታ ተመዝግቧል።"
+        friendly_message = f"እንኳን ደህና መጣህ፣ {volunteer.full_name}! Check-in ተመዝግቧል።"
 
     elif request.action == "check-out":
         if not attendance_record:
             return {
                 "status": "error",
-                "message": "መጀመሪያ Check-in ማድረግ አለብህ!",
+                "message": f"{volunteer.full_name}፣ ዛሬ ገና Check-in አላደረግህም - መጀመሪያ 'Check in' ተጫን።",
                 "data": None,
             }
         if attendance_record.check_out_time:
             return {
                 "status": "error",
-                "message": "ዛሬ ቀድመህ Check-out አድርገሃል!",
+                "message": f"{volunteer.full_name}፣ ዛሬ ቀድሞውኑ Check-out አድርገሃል - ደህና ሰንብት!",
                 "data": schemas.AttendanceResponse.model_validate(attendance_record),
             }
 
@@ -204,12 +244,12 @@ def record_attendance(
         attendance_record.check_out_device = device_info
         db.commit()
         db.refresh(attendance_record)
-        friendly_message = f"ደህና ሰንብት፣ {volunteer.full_name}! Check-out በተሳካ ሁኔታ ተመዝግቧል።"
+        friendly_message = f"ደህና ሰንብት፣ {volunteer.full_name}! Check-out ተመዝግቧል፣ ጥሩ ስራ!"
 
     else:
         return {
             "status": "error",
-            "message": "action 'check-in' ወይም 'check-out' ብቻ መሆን አለበት።",
+            "message": "ያልታወቀ ትዕዛዝ ተልኳል። ገጹን አድሶ (refresh) እንደገና ሞክር፣ ችግር ከቀጠለ አድሚን አነጋግር።",
             "data": None,
         }
 
@@ -266,6 +306,17 @@ def get_dashboard_analytics(db: Session) -> schemas.DashboardAnalytics:
         for t, c in team_counts.items()
     ]
 
+    # --- Soft-flag count for today's stat card: how many of today's check-ins
+    # share a (IP, device) pair with a DIFFERENT volunteer's check-in within
+    # SHARED_DEVICE_WINDOW_MINUTES of each other. Informational only.
+    todays_checkins = db.query(models.Attendance).filter(
+        models.Attendance.date == today_str,
+        models.Attendance.check_in_ip.isnot(None),
+        models.Attendance.check_in_device.isnot(None),
+    ).all()
+
+    suspicious_checkins_today = len(_compute_shared_device_flags(todays_checkins))
+
     return schemas.DashboardAnalytics(
         total_volunteers=total_volunteers,
         today_checkins=today_checkins,
@@ -273,6 +324,7 @@ def get_dashboard_analytics(db: Session) -> schemas.DashboardAnalytics:
         certified_volunteers_count=certified_volunteers_count,
         daily_attendance_trend=daily_stats_list,
         team_distribution=team_stats_list,
+        suspicious_checkins_today=suspicious_checkins_today,
     )
 
 
@@ -286,6 +338,13 @@ def get_attendance_log(db: Session, limit: int = 200) -> list[schemas.Attendance
         .all()
     )
 
+    # --- Soft-flag: same (date, check-in IP, check-in device) used for check-in by
+    # a DIFFERENT volunteer_id within SHARED_DEVICE_WINDOW_MINUTES of each other.
+    # This never blocks a check-in - it only surfaces a badge for the admin to
+    # review, since e.g. two siblings sharing one phone hours apart would
+    # otherwise look identical to "used a friend's ID right at the door".
+    flagged_ids = _compute_shared_device_flags([attendance for attendance, _ in rows])
+
     log = []
     for attendance, volunteer in rows:
         ip_mismatch = bool(
@@ -293,6 +352,7 @@ def get_attendance_log(db: Session, limit: int = 200) -> list[schemas.Attendance
             and attendance.check_out_ip
             and attendance.check_in_ip != attendance.check_out_ip
         )
+
         log.append(schemas.AttendanceLogRow(
             id=attendance.id,
             volunteer_id=attendance.volunteer_id,
@@ -306,5 +366,6 @@ def get_attendance_log(db: Session, limit: int = 200) -> list[schemas.Attendance
             check_out_ip=attendance.check_out_ip,
             check_out_device=attendance.check_out_device,
             ip_mismatch=ip_mismatch,
+            shared_device_flag=attendance.id in flagged_ids,
         ))
     return log

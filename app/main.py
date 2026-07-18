@@ -104,7 +104,7 @@ def root():
 def login_admin(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     admin = db.query(models.AdminUser).filter(models.AdminUser.username == form_data.username).first()
     if not admin or not pwd_context.verify(form_data.password, admin.hashed_password):
-        raise HTTPException(status_code=401, detail="የተሳሳተ የተጠቃሚ ስም ወይም የይለፍ ቃል።")
+        raise HTTPException(status_code=401, detail="የተጠቃሚ ስም ወይም የይለፍ ቃል ትክክል አይደለም። እንደገና ሞክር።")
 
     access_token = jwt.encode(
         {"sub": admin.username, "exp": datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)},
