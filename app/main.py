@@ -1,7 +1,7 @@
 import os
 from datetime import datetime, timedelta
 from typing import List
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -18,16 +18,16 @@ app = FastAPI(title="Ethiopia Reads Attendance API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # production ላይ ወደ ፍሮንትኤንድህ ትክክለኛ URL ቀይረው
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # --- SECURITY ---
-# NOTE: production ላይ SECRET_KEY ን ወደ .env አዛውረው (አሁን hardcode ነው፣ ለሙከራ ብቻ ተገቢ)
 SECRET_KEY = os.getenv("SECRET_KEY", "SUPER_SECRET_KEY_FOR_ETHIOPIA_READS_123!")
 ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/admin/login")
 
@@ -46,9 +46,6 @@ def get_current_admin(token: str = Depends(oauth2_scheme), db: Session = Depends
         raise HTTPException(status_code=401)
 
 
-# --- STARTUP: default admin ካልኖረ በራስ-ሰር መፍጠር ---
-# ከዚህ ቀደም admin ለመፍጠር ምንም endpoint/script ስላልነበረ login ፈጽሞ አይሳካም ነበር።
-# .env ላይ ADMIN_USERNAME / ADMIN_PASSWORD በማስቀመጥ መቆጣጠር ትችላለህ።
 @app.on_event("startup")
 def create_default_admin():
     db = SessionLocal()
@@ -73,7 +70,30 @@ def _generate_next_volunteer_id(db: Session) -> str:
     return f"ER-{(last_number + 1):03d}"
 
 
+def _extract_client_info(request: Request) -> tuple[str, str]:
+    """
+    Render (እና አብዛኛው cloud host) ከፊት ለፊት reverse proxy ስላለው፣
+    request.client.host ብቻ ብንጠቀም የ Render ውስጣዊ proxy IP ነው የምናገኘው እንጂ
+    እውነተኛውን የተጠቃሚ IP አይደለም። ስለዚህ መጀመሪያ X-Forwarded-For ን እንፈትሻለን፣
+    ከሌለ ብቻ ወደ request.client.host እንመለሳለን።
+    """
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        # X-Forwarded-For: "client_ip, proxy1_ip, proxy2_ip" - የመጀመሪያው እውነተኛው client ነው
+        ip = forwarded_for.split(",")[0].strip()
+    else:
+        ip = request.client.host if request.client else "unknown"
+
+    device = request.headers.get("user-agent", "unknown")
+    return ip, device
+
+
 # --- ENDPOINTS ---
+
+@app.get("/")
+def root():
+    return {"message": "Ethiopia Reads Attendance API is running. See /docs for the API reference."}
+
 
 @app.post("/api/admin/login", response_model=schemas.Token)
 def login_admin(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
@@ -82,7 +102,7 @@ def login_admin(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = 
         raise HTTPException(status_code=401, detail="የተሳሳተ የተጠቃሚ ስም ወይም የይለፍ ቃል።")
 
     access_token = jwt.encode(
-        {"sub": admin.username, "exp": datetime.utcnow() + timedelta(days=1)},
+        {"sub": admin.username, "exp": datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)},
         SECRET_KEY, algorithm=ALGORITHM
     )
     return {"access_token": access_token, "token_type": "bearer"}
@@ -110,13 +130,24 @@ def read_volunteers(db: Session = Depends(get_db), current_admin=Depends(get_cur
 
 
 @app.post("/api/attendance", response_model=schemas.AttendanceActionResponse)
-def record_attendance(request: schemas.AttendanceRequest, db: Session = Depends(get_db)):
-    return crud.record_attendance(db, request)
+def record_attendance(
+    payload: schemas.AttendanceRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    ip_address, device_info = _extract_client_info(request)
+    return crud.record_attendance(db, payload, ip_address=ip_address, device_info=device_info)
 
 
 @app.get("/api/admin/analytics", response_model=schemas.DashboardAnalytics)
 def get_analytics(db: Session = Depends(get_db), current_admin=Depends(get_current_admin)):
     return crud.get_dashboard_analytics(db)
+
+
+# NEW: attendance log with IP/device - admin uses this to spot "friend used my ID" cases
+@app.get("/api/admin/attendance-log", response_model=List[schemas.AttendanceLogRow])
+def get_attendance_log(db: Session = Depends(get_db), current_admin=Depends(get_current_admin)):
+    return crud.get_attendance_log(db)
 
 
 @app.get("/api/admin/export-csv")

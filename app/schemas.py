@@ -34,7 +34,6 @@ class VolunteerResponse(BaseModel):
         from_attributes = True
 
 
-# NEW: register endpoint's response wrapper - user friendly message + data
 class VolunteerRegisterResponse(BaseModel):
     status: str = "success"
     message: str
@@ -47,6 +46,8 @@ class AttendanceRequest(BaseModel):
     user_lat: float
     user_lon: float
     action: str  # "check-in" ወይም "check-out"
+    # NOTE: ip_address/device_info ከ client በፍጹም አንቀበልም - client ላይ ማጭበርበር
+    # ይቻላልና በ FastAPI backend በራሱ ከ Request object ላይ እንወስዳለን (main.py ይመልከቱ)።
 
 class AttendanceResponse(BaseModel):
     id: int
@@ -55,18 +56,37 @@ class AttendanceResponse(BaseModel):
     week_number: int
     check_in_time: Optional[datetime] = None
     check_out_time: Optional[datetime] = None
+    check_in_ip: Optional[str] = None
+    check_in_device: Optional[str] = None
+    check_out_ip: Optional[str] = None
+    check_out_device: Optional[str] = None
     status: str
 
     class Config:
         from_attributes = True
 
 
-# NEW: check-in/check-out endpoint's response wrapper
-# (data is Optional because error cases—e.g. "wrong location"—don't have a record)
 class AttendanceActionResponse(BaseModel):
     status: str  # "success" or "error"
     message: str
     data: Optional[AttendanceResponse] = None
+
+
+# NEW: admin-facing attendance log row (attendance + volunteer name/team combined)
+# so the dashboard can show "who, when, from where, on what device" in one table.
+class AttendanceLogRow(BaseModel):
+    id: int
+    volunteer_id: str
+    full_name: str
+    team: str
+    date: str
+    check_in_time: Optional[datetime] = None
+    check_in_ip: Optional[str] = None
+    check_in_device: Optional[str] = None
+    check_out_time: Optional[datetime] = None
+    check_out_ip: Optional[str] = None
+    check_out_device: Optional[str] = None
+    ip_mismatch: bool  # check-in IP != check-out IP -> flag for admin review only
 
 
 # ==================== 4. ANALYTICS / DASHBOARD SCHEMAS ====================
@@ -78,8 +98,6 @@ class TeamStats(BaseModel):
     team_name: str
     count: int
 
-# NOTE: field names here MUST match exactly what crud.get_dashboard_analytics()
-# constructs, otherwise you'll get a pydantic ValidationError.
 class DashboardAnalytics(BaseModel):
     total_volunteers: int
     today_checkins: int

@@ -8,7 +8,7 @@ import math
 # --- 1. GEOFENCING CONSTANTS ---
 COMPANY_LAT = float(os.getenv("COMPANY_LAT", "9.012345"))
 COMPANY_LON = float(os.getenv("COMPANY_LON", "38.754321"))
-ALLOWED_RADIUS_METERS = float(os.getenv("ALLOWED_RADIUS_METERS", "5000"))  # በሜትር
+ALLOWED_RADIUS_METERS = float(os.getenv("ALLOWED_RADIUS_METERS", "5000"))
 
 # --- 2. ራስ-ሰር የ CSV BACKUP ፎልደር ማዘጋጃ ---
 BACKUP_DIR = "backups"
@@ -27,7 +27,8 @@ def append_to_csv_backup(attendance_record: models.Attendance, volunteer_name: s
             if not file_exists:
                 writer.writerow([
                     "Backup_Timestamp", "Attendance_ID", "Volunteer_ID", "Full_Name", "Team",
-                    "Date", "Week_Number", "Check_In_Time", "Check_Out_Time", "Status"
+                    "Date", "Week_Number", "Check_In_Time", "Check_In_IP", "Check_In_Device",
+                    "Check_Out_Time", "Check_Out_IP", "Check_Out_Device", "Status"
                 ])
 
             writer.writerow([
@@ -39,7 +40,11 @@ def append_to_csv_backup(attendance_record: models.Attendance, volunteer_name: s
                 attendance_record.date,
                 attendance_record.week_number,
                 attendance_record.check_in_time.isoformat() if attendance_record.check_in_time else "",
+                attendance_record.check_in_ip or "",
+                attendance_record.check_in_device or "",
                 attendance_record.check_out_time.isoformat() if attendance_record.check_out_time else "",
+                attendance_record.check_out_ip or "",
+                attendance_record.check_out_device or "",
                 attendance_record.status
             ])
     except Exception as e:
@@ -100,10 +105,6 @@ def get_current_week_number(db: Session) -> int:
 
 # --- 6. VOLUNTEER CRUD ---
 def create_volunteer(db: Session, volunteer: schemas.VolunteerCreate, volunteer_id: str):
-    """
-    NOTE: volunteer_id (e.g. "ER-001") is now generated in main.py and passed in,
-    so the ID-generation logic lives in exactly one place instead of two.
-    """
     db_volunteer = models.Volunteer(
         volunteer_id=volunteer_id,
         full_name=volunteer.full_name,
@@ -125,10 +126,18 @@ def get_volunteer_by_id(db: Session, volunteer_id: str):
 
 
 # --- 7. ATTENDANCE CRUD & AUTO-BACKUP INTEGRATION ---
-def record_attendance(db: Session, request: schemas.AttendanceRequest):
+def record_attendance(
+    db: Session,
+    request: schemas.AttendanceRequest,
+    ip_address: str,
+    device_info: str,
+):
     """
-    Check-in/Check-out መዝጋቢ። ውጤቱ ሁልጊዜ JSON-safe dict ብቻ ይመልሳል
-    (ጥሬ SQLAlchemy object አይመልስም -> ስለዚህ FastAPI ሲያመሳግነው (serialize) አይሰበርም).
+    Check-in/Check-out መዝጋቢ። IP/device በ FastAPI layer ላይ (main.py) ከ Request object
+    ራሱ የተወሰደ ነው - client በፍጹም ራሱን IP/device አድርጎ አይላክም (ማጭበርበርን ለመከላከል)።
+
+    IP/device ብቻውን ማጭበርበርን ራሱ አያግድም (ተመሳሳይ WiFi ላይ ያሉ ሁለት ሰዎች ተመሳሳይ IP ሊኖራቸው
+    ይችላል) - ግን admin ለክትትል/ማጣራት እንዲጠቀምበት metadata ሆኖ ይመዘገባል።
     """
     volunteer = get_volunteer_by_id(db, request.volunteer_id)
     if not volunteer:
@@ -167,6 +176,8 @@ def record_attendance(db: Session, request: schemas.AttendanceRequest):
             date=today_str,
             week_number=current_week,
             check_in_time=datetime.utcnow(),
+            check_in_ip=ip_address,
+            check_in_device=device_info,
             status="Present"
         )
         db.add(attendance_record)
@@ -189,6 +200,8 @@ def record_attendance(db: Session, request: schemas.AttendanceRequest):
             }
 
         attendance_record.check_out_time = datetime.utcnow()
+        attendance_record.check_out_ip = ip_address
+        attendance_record.check_out_device = device_info
         db.commit()
         db.refresh(attendance_record)
         friendly_message = f"ደህና ሰንብት፣ {volunteer.full_name}! Check-out በተሳካ ሁኔታ ተመዝግቧል።"
@@ -200,10 +213,7 @@ def record_attendance(db: Session, request: schemas.AttendanceRequest):
             "data": None,
         }
 
-    # ብቁነትን በራስ-ሰር መፈተሽ/ማዘመን
     update_certificate_eligibility(db, request.volunteer_id)
-
-    # CSV Backup
     append_to_csv_backup(attendance_record, volunteer.full_name, volunteer.team)
 
     return {
@@ -264,3 +274,37 @@ def get_dashboard_analytics(db: Session) -> schemas.DashboardAnalytics:
         daily_attendance_trend=daily_stats_list,
         team_distribution=team_stats_list,
     )
+
+
+# --- 9. ATTENDANCE LOG (NEW) - admin dashboard: who/when/where/what-device ---
+def get_attendance_log(db: Session, limit: int = 200) -> list[schemas.AttendanceLogRow]:
+    rows = (
+        db.query(models.Attendance, models.Volunteer)
+        .join(models.Volunteer, models.Attendance.volunteer_id == models.Volunteer.volunteer_id)
+        .order_by(models.Attendance.date.desc(), models.Attendance.check_in_time.desc())
+        .limit(limit)
+        .all()
+    )
+
+    log = []
+    for attendance, volunteer in rows:
+        ip_mismatch = bool(
+            attendance.check_in_ip
+            and attendance.check_out_ip
+            and attendance.check_in_ip != attendance.check_out_ip
+        )
+        log.append(schemas.AttendanceLogRow(
+            id=attendance.id,
+            volunteer_id=attendance.volunteer_id,
+            full_name=volunteer.full_name,
+            team=volunteer.team,
+            date=attendance.date,
+            check_in_time=attendance.check_in_time,
+            check_in_ip=attendance.check_in_ip,
+            check_in_device=attendance.check_in_device,
+            check_out_time=attendance.check_out_time,
+            check_out_ip=attendance.check_out_ip,
+            check_out_device=attendance.check_out_device,
+            ip_mismatch=ip_mismatch,
+        ))
+    return log
