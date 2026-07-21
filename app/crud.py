@@ -165,6 +165,23 @@ def get_volunteer_by_id(db: Session, volunteer_id: str):
     return db.query(models.Volunteer).filter(models.Volunteer.volunteer_id == volunteer_id).first()
 
 
+# NEW: admin dashboard "edit volunteer" - only touches fields the admin
+# actually sent (Pydantic's exclude_unset), so a partial edit (e.g. just
+# fixing a typo in the team name) doesn't accidentally wipe out other fields.
+def update_volunteer(db: Session, volunteer_id: str, update: schemas.VolunteerUpdate):
+    volunteer = get_volunteer_by_id(db, volunteer_id)
+    if not volunteer:
+        return None
+
+    changes = update.model_dump(exclude_unset=True)
+    for field, value in changes.items():
+        setattr(volunteer, field, value)
+
+    db.commit()
+    db.refresh(volunteer)
+    return volunteer
+
+
 # --- 7. ATTENDANCE CRUD & AUTO-BACKUP INTEGRATION ---
 def record_attendance(
     db: Session,

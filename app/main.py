@@ -134,6 +134,22 @@ def read_volunteers(db: Session = Depends(get_db), current_admin=Depends(get_cur
     return db.query(models.Volunteer).all()
 
 
+# NEW: admin dashboard "edit volunteer" - volunteer_id stays in the URL/path
+# (identifies which row) but is never itself editable, since it's a foreign
+# key on every Attendance row for that person.
+@app.patch("/api/volunteers/{volunteer_id}", response_model=schemas.VolunteerResponse)
+def update_volunteer(
+    volunteer_id: str,
+    update: schemas.VolunteerUpdate,
+    db: Session = Depends(get_db),
+    current_admin=Depends(get_current_admin),
+):
+    updated = crud.update_volunteer(db, volunteer_id, update)
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"«{volunteer_id}» የሚባል ቮለንቲየር አልተገኘም።")
+    return updated
+
+
 @app.post("/api/attendance", response_model=schemas.AttendanceActionResponse)
 def record_attendance(
     payload: schemas.AttendanceRequest,

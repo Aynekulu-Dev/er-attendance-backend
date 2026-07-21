@@ -21,6 +21,17 @@ class VolunteerCreate(BaseModel):
     phone_number: Optional[str] = None
     team: Optional[str] = "General"
 
+
+# NEW: admin dashboard "edit volunteer" - all fields optional so the admin
+# can change just one thing (e.g. only the team) without resending everything.
+# volunteer_id is intentionally NOT editable here - it's the primary lookup
+# key (used as a foreign key on every Attendance row), so changing it would
+# either need a cascading rename or break existing attendance history.
+class VolunteerUpdate(BaseModel):
+    full_name: Optional[str] = None
+    phone_number: Optional[str] = None
+    team: Optional[str] = None
+
 class VolunteerResponse(BaseModel):
     id: int
     volunteer_id: str
