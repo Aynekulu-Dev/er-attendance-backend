@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from typing import List
 from fastapi import FastAPI, HTTPException, Depends, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from jose import JWTError, jwt
@@ -156,7 +156,16 @@ def get_attendance_log(db: Session = Depends(get_db), current_admin=Depends(get_
 
 
 @app.get("/api/admin/export-csv")
-def export_csv(current_admin=Depends(get_current_admin)):
-    if not os.path.exists("backups/attendance_backup.csv"):
+def export_csv(db: Session = Depends(get_db), current_admin=Depends(get_current_admin)):
+    # NOTE: ከ static backup ፋይል ላይ ማገልገል ትተነዋል - ፋይሉ Render ላይ ephemeral
+    # disk ላይ ስለሆነ redeploy/restart ሲደረግ ሊጠፋ ይችላል። ይልቁንስ ሁልጊዜ ከ DB
+    # ቀጥታ CSV እንገነባለን (crud.generate_attendance_csv) - ስለዚህ ፋይሉ ቢጠፋም
+    # export ሁልጊዜ ትክክለኛውን የአሁኑን ዳታ ይሰጣል።
+    csv_content = crud.generate_attendance_csv(db)
+    if not csv_content.strip().count("\n") >= 1:
         raise HTTPException(status_code=404, detail="እስካሁን የተመዘገበ የመገኘት (attendance) ዳታ የለም።")
-    return FileResponse("backups/attendance_backup.csv", media_type="text/csv", filename="attendance.csv")
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=attendance.csv"},
+    )

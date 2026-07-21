@@ -328,6 +328,51 @@ def get_dashboard_analytics(db: Session) -> schemas.DashboardAnalytics:
     )
 
 
+# --- 8b. LIVE CSV EXPORT (generated from DB on every request, not from the
+# on-disk backup file) ---
+# ለምን፡ `append_to_csv_backup` የሚጽፈው ፋይል Render (እና ሌሎች cloud host) ላይ
+# ephemeral disk ላይ ስለሆነ redeploy/restart ሲደረግ ሊጠፋ ይችላል - ያኔ export
+# endpoint ቀድሞ ያንን ፋይል ብቻ ስለሚያገለግል 404 ይመልስ ነበር (ምንም ባይጠፋም እንኳ ፋይሉ
+# ማንኛውንም date range/team ማጣራት አይችልም ነበር)። ስለዚህ export ራሱ ሁልጊዜ ከ DB
+# ቀጥታ ይመነጫል - ፋይሉ ቢጠፋ/ባይኖርም ችግር የለውም፣ ትክክለኛው ምንጭ DB ብቻ ነው።
+def generate_attendance_csv(db: Session) -> str:
+    import io
+
+    rows = (
+        db.query(models.Attendance, models.Volunteer)
+        .join(models.Volunteer, models.Attendance.volunteer_id == models.Volunteer.volunteer_id)
+        .order_by(models.Attendance.date.asc(), models.Attendance.check_in_time.asc())
+        .all()
+    )
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Attendance_ID", "Volunteer_ID", "Full_Name", "Team",
+        "Date", "Week_Number", "Check_In_Time", "Check_In_IP", "Check_In_Device",
+        "Check_Out_Time", "Check_Out_IP", "Check_Out_Device", "Status"
+    ])
+
+    for attendance, volunteer in rows:
+        writer.writerow([
+            attendance.id,
+            attendance.volunteer_id,
+            volunteer.full_name,
+            volunteer.team,
+            attendance.date,
+            attendance.week_number,
+            attendance.check_in_time.isoformat() if attendance.check_in_time else "",
+            attendance.check_in_ip or "",
+            attendance.check_in_device or "",
+            attendance.check_out_time.isoformat() if attendance.check_out_time else "",
+            attendance.check_out_ip or "",
+            attendance.check_out_device or "",
+            attendance.status,
+        ])
+
+    return output.getvalue()
+
+
 # --- 9. ATTENDANCE LOG (NEW) - admin dashboard: who/when/where/what-device ---
 def get_attendance_log(db: Session, limit: int = 200) -> list[schemas.AttendanceLogRow]:
     rows = (
