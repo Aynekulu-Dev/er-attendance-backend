@@ -173,6 +173,19 @@ def get_volunteer_by_id(db: Session, volunteer_id: str):
     return db.query(models.Volunteer).filter(models.Volunteer.volunteer_id == volunteer_id).first()
 
 
+def delete_volunteer(db: Session, volunteer_id: str):
+    volunteer = get_volunteer_by_id(db, volunteer_id)
+    if not volunteer:
+        return False
+    # NOTE: Volunteer.attendances has cascade="all, delete-orphan" (models.py),
+    # so deleting the volunteer also permanently deletes every Attendance row
+    # tied to them - their whole attendance history. This is irreversible;
+    # the frontend must confirm with the admin before calling this.
+    db.delete(volunteer)
+    db.commit()
+    return True
+
+
 # NEW: admin dashboard "edit volunteer" - only touches fields the admin
 # actually sent (Pydantic's exclude_unset), so a partial edit (e.g. just
 # fixing a typo in the team name) doesn't accidentally wipe out other fields.

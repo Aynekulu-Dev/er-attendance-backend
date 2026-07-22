@@ -150,6 +150,21 @@ def update_volunteer(
     return updated
 
 
+# NEW: admin dashboard "delete volunteer". Irreversible - also deletes all of
+# that volunteer's Attendance history (cascade, see models.py). The frontend
+# confirms with the admin before calling this.
+@app.delete("/api/volunteers/{volunteer_id}", status_code=204)
+def delete_volunteer(
+    volunteer_id: str,
+    db: Session = Depends(get_db),
+    current_admin=Depends(get_current_admin),
+):
+    deleted = crud.delete_volunteer(db, volunteer_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"«{volunteer_id}» የሚባል ቮለንቲየር አልተገኘም።")
+    return Response(status_code=204)
+
+
 @app.post("/api/attendance", response_model=schemas.AttendanceActionResponse)
 def record_attendance(
     payload: schemas.AttendanceRequest,
