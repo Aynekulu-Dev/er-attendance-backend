@@ -1,5 +1,5 @@
 import datetime
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Index
 from sqlalchemy.orm import relationship
 from .database import Base
 
@@ -50,3 +50,22 @@ class Attendance(Base):
     status = Column(String, default="Present")  # Present, Late, Absent
 
     volunteer = relationship("Volunteer", back_populates="attendances")
+
+    # NEW: race-condition guard. App-level logic (crud.record_attendance)
+    # already blocks a 2nd check-in while a session is still open, but two
+    # near-simultaneous requests (double-tap, retry) could both pass that
+    # check before either commits. This partial unique index makes the
+    # database itself refuse a second *open* (check_out_time IS NULL) row
+    # for the same volunteer + date, closing that race window. It only
+    # applies to Postgres/SQLite (both support partial indexes); on other
+    # backends it's simply not created and app-level logic still applies.
+    __table_args__ = (
+        Index(
+            "ix_one_open_session_per_volunteer_per_day",
+            "volunteer_id",
+            "date",
+            unique=True,
+            postgresql_where=(check_out_time.is_(None)),
+            sqlite_where=(check_out_time.is_(None)),
+        ),
+    )

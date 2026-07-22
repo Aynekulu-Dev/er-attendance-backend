@@ -1,6 +1,7 @@
 import os
 import csv
 from datetime import datetime, date, timedelta
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from . import models, schemas
 import math
@@ -9,6 +10,10 @@ import math
 COMPANY_LAT = float(os.getenv("COMPANY_LAT", "9.012345"))
 COMPANY_LON = float(os.getenv("COMPANY_LON", "38.754321"))
 ALLOWED_RADIUS_METERS = float(os.getenv("ALLOWED_RADIUS_METERS", "5000"))
+
+# NEW: በቀን ስንት ዙር (check-in→check-out cycle) እንደሚፈቀድ - ለምሳሌ ጠዋት 1 ዙር +
+# ከሰዓት 1 ዙር = 2. ከዚህ በላይ ማድረግ ካስፈለገ .env ውስጥ MAX_DAILY_SESSIONS ቀይር።
+MAX_DAILY_SESSIONS = int(os.getenv("MAX_DAILY_SESSIONS", "2"))
 
 # --- 2. ራስ-ሰር የ CSV BACKUP ፎልደር ማዘጋጃ ---
 BACKUP_DIR = "backups"
@@ -111,14 +116,17 @@ def update_certificate_eligibility(db: Session, volunteer_id: str):
         models.Attendance.status == "Present"
     ).all()
 
-    weekly_presence = {week: 0 for week in range(1, 8)}
+    # NEW: ከ MAX_DAILY_SESSIONS ጋር በቀን ከ1 በላይ record ሊኖር ስለሚችል፣ "የተገኘበት ቀን"
+    # ለ certificate ብቁነት በ record ብዛት ሳይሆን በ *distinct ቀን* (date) መቆጠር አለበት -
+    # አለበለዚያ አንድ ሰው በ1 ቀን 2 ዙር ሰርቶ እንደ 2 ቀን ተቆጥሮ ብቁነቱን ያጭበረብራል።
+    weekly_days_present = {week: set() for week in range(1, 8)}
     for record in attendances:
-        if record.week_number in weekly_presence:
-            weekly_presence[record.week_number] += 1
+        if record.week_number in weekly_days_present:
+            weekly_days_present[record.week_number].add(record.date)
 
     is_eligible = True
-    for week, count in weekly_presence.items():
-        if count < 3:
+    for week, days in weekly_days_present.items():
+        if len(days) < 3:
             is_eligible = False
             break
 
@@ -215,17 +223,39 @@ def record_attendance(
     today_str = date.today().isoformat()
     current_week = get_current_week_number(db)
 
-    attendance_record = db.query(models.Attendance).filter(
-        models.Attendance.volunteer_id == request.volunteer_id,
-        models.Attendance.date == today_str
-    ).first()
+    # NEW: ከ1 ይልቅ ዛሬ ያሉትን ሁሉንም records እናመጣለን (እስከ MAX_DAILY_SESSIONS ድረስ
+    # ብዙ ዙር (check-in→check-out cycle) እንዲኖር ስለምንፈቅድ - ለምሳሌ ጠዋት 1 ዙር +
+    # ከሰዓት 1 ዙር)። "ክፍት" ዙር ማለት check-in ያለው ግን check-out የሌለው ነው።
+    todays_records = (
+        db.query(models.Attendance)
+        .filter(
+            models.Attendance.volunteer_id == request.volunteer_id,
+            models.Attendance.date == today_str,
+        )
+        .order_by(models.Attendance.check_in_time.asc())
+        .all()
+    )
+    open_record = next((r for r in todays_records if r.check_out_time is None), None)
+    sessions_used = len(todays_records)
 
     if request.action == "check-in":
-        if attendance_record:
+        if open_record:
             return {
                 "status": "error",
-                "message": f"{volunteer.full_name}፣ ዛሬ ቀድሞውኑ Check-in አድርገሃል - ደግመህ ማድረግ አያስፈልግም።",
-                "data": schemas.AttendanceResponse.model_validate(attendance_record),
+                "message": (
+                    f"{volunteer.full_name}፣ አሁን ባለህበት ክፍለ ጊዜ ላይ ነህ (check-out ገና አላደረግህም)። "
+                    "መጀመሪያ 'Check out' ተጫን፣ ከዚያ አዲስ ዙር መጀመር ትችላለህ።"
+                ),
+                "data": schemas.AttendanceResponse.model_validate(open_record),
+            }
+        if sessions_used >= MAX_DAILY_SESSIONS:
+            return {
+                "status": "error",
+                "message": (
+                    f"{volunteer.full_name}፣ ዛሬ የተፈቀደውን ከፍተኛ ልክ ({MAX_DAILY_SESSIONS} ዙር) "
+                    "ደርሰሃል - ለዛሬ ተጨማሪ check-in ማድረግ አትችልም።"
+                ),
+                "data": None,
             }
 
         attendance_record = models.Attendance(
@@ -238,24 +268,44 @@ def record_attendance(
             status="Present"
         )
         db.add(attendance_record)
-        db.commit()
-        db.refresh(attendance_record)
-        friendly_message = f"እንኳን ደህና መጣህ፣ {volunteer.full_name}! Check-in ተመዝግቧል።"
-
-    elif request.action == "check-out":
-        if not attendance_record:
+        try:
+            db.commit()
+        except IntegrityError:
+            # ሁለት check-in ጥያቄዎች በአንድ ጊዜ (double-tap/network retry) ሲላኩ
+            # ከላይ ያለው ፍተሻ ሁለቱንም ቢያሳልፍም፣ DB partial unique index (models.py)
+            # ሁለተኛውን ይከለክለዋል - እዚህ በጸጋ ይያዘዋል፣ raw 500 error ከመስጠት ይልቅ።
+            db.rollback()
             return {
                 "status": "error",
-                "message": f"{volunteer.full_name}፣ ዛሬ ገና Check-in አላደረግህም - መጀመሪያ 'Check in' ተጫን።",
+                "message": (
+                    f"{volunteer.full_name}፣ Check-in ልክ አሁን ተመዝግቧል (ምናልባት ደጋግመህ ተጭነህ ይሆናል) - "
+                    "ገጹን አድሶ ሁኔታውን አረጋግጥ።"
+                ),
                 "data": None,
             }
-        if attendance_record.check_out_time:
-            return {
-                "status": "error",
-                "message": f"{volunteer.full_name}፣ ዛሬ ቀድሞውኑ Check-out አድርገሃል - ደህና ሰንብት!",
-                "data": schemas.AttendanceResponse.model_validate(attendance_record),
-            }
+        db.refresh(attendance_record)
+        session_no = sessions_used + 1
+        friendly_message = (
+            f"እንኳን ደህና መጣህ፣ {volunteer.full_name}! Check-in ተመዝግቧል (ዙር {session_no}/{MAX_DAILY_SESSIONS})።"
+        )
 
+    elif request.action == "check-out":
+        if not open_record:
+            if sessions_used >= MAX_DAILY_SESSIONS:
+                message = (
+                    f"{volunteer.full_name}፣ ዛሬ ያሉህን ሁሉንም ዙር ({MAX_DAILY_SESSIONS}) "
+                    "ጨርሰሃል - ክፍት ዙር የለም።"
+                )
+            elif sessions_used == 0:
+                message = f"{volunteer.full_name}፣ ገና Check-in አላደረግህም - መጀመሪያ 'Check in' ተጫን።"
+            else:
+                message = (
+                    f"{volunteer.full_name}፣ አሁን ክፍት ዙር የለህም (ያለፈውን ዙር check-out አድርገሃል)። "
+                    "አዲስ ዙር መጀመር ከፈለግህ መጀመሪያ 'Check in' ተጫን።"
+                )
+            return {"status": "error", "message": message, "data": None}
+
+        attendance_record = open_record
         attendance_record.check_out_time = datetime.utcnow()
         attendance_record.check_out_ip = ip_address
         attendance_record.check_out_device = device_info
