@@ -7,9 +7,9 @@ from . import models, schemas
 import math
 
 # --- 1. GEOFENCING CONSTANTS ---
-COMPANY_LAT = float(os.getenv("COMPANY_LAT", "9.012345"))
-COMPANY_LON = float(os.getenv("COMPANY_LON", "38.754321"))
-ALLOWED_RADIUS_METERS = float(os.getenv("ALLOWED_RADIUS_METERS", "5000"))
+COMPANY_LAT = float(os.getenv("COMPANY_LAT", "9.007923"))
+COMPANY_LON = float(os.getenv("COMPANY_LON", "38.767821"))
+ALLOWED_RADIUS_METERS = float(os.getenv("ALLOWED_RADIUS_METERS", "50"))
 
 # NEW: በቀን ስንት ዙር (check-in→check-out cycle) እንደሚፈቀድ - ለምሳሌ ጠዋት 1 ዙር +
 # ከሰዓት 1 ዙር = 2. ከዚህ በላይ ማድረግ ካስፈለገ .env ውስጥ MAX_DAILY_SESSIONS ቀይር።
