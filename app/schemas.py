@@ -56,6 +56,12 @@ class AttendanceRequest(BaseModel):
     volunteer_id: str
     user_lat: float
     user_lon: float
+    # NEW: browser's reported GPS accuracy radius in meters (position.coords.accuracy).
+    # Optional/nullable since older frontend builds or unusual browsers may not send it -
+    # we never want a missing accuracy value to break check-in/check-out itself. Used only
+    # for diagnostics (surfaced in the error message when someone is out-of-range), not
+    # stored or enforced as its own rule.
+    accuracy_meters: Optional[float] = None
     action: str  # "check-in" ወይም "check-out"
     # NOTE: ip_address/device_info ከ client በፍጹም አንቀበልም - client ላይ ማጭበርበር
     # ይቻላልና በ FastAPI backend በራሱ ከ Request object ላይ እንወስዳለን (main.py ይመልከቱ)።

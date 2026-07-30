@@ -7,9 +7,26 @@ from . import models, schemas
 import math
 
 # --- 1. GEOFENCING CONSTANTS ---
-COMPANY_LAT = float(os.getenv("COMPANY_LAT", "9.012345"))
+COMPANY_LAT = float(os.getenv("COMPANY_LAT", "9.007923"))
 COMPANY_LON = float(os.getenv("COMPANY_LON", "38.754321"))
 ALLOWED_RADIUS_METERS = float(os.getenv("ALLOWED_RADIUS_METERS", "5000"))
+
+# NEW: check-in/check-out ስልክ ላይ ብቻ (mobile only) እንዲፈቀድ - PC/laptop browser ላይ
+# GPS chip ስለሌለ location ሁልጊዜ ግምታዊ (IP/WiFi-based, ኪሎሜትሮች የተማሳተ) ነው
+# የሚሆነው፣ ይህም geofencing ን ትርጉም-አልባ ያደርገዋል። ስለዚህ User-Agent ን በመመልከት
+# ኮምፒውተር/laptop መስሎ ከታየ እናግደዋለን። ይህ 100% fool-proof አይደለም (User-Agent
+# spoof ማድረግ ይቻላል) ግን ለተራ ተጠቃሚ ጥሩ deterrent ነው - frontend ላይም ተመሳሳይ
+# ፍተሻ አለ (UX ለማሻሻል)፣ ይሄ ግን እውነተኛው ማስፈጸሚያ ነው (client-side ብቻውን በቀላሉ
+# ሊታለፍ ስለሚችል)።
+_DESKTOP_UA_HINTS = ("windows nt", "macintosh", "x11; linux")
+_MOBILE_UA_HINTS = ("android", "iphone", "ipad", "mobile")
+
+
+def is_desktop_device(user_agent: str) -> bool:
+    ua = (user_agent or "").lower()
+    if any(hint in ua for hint in _MOBILE_UA_HINTS):
+        return False
+    return any(hint in ua for hint in _DESKTOP_UA_HINTS)
 
 # NEW: በቀን ስንት ዙር (check-in→check-out cycle) እንደሚፈቀድ - ለምሳሌ ጠዋት 1 ዙር +
 # ከሰዓት 1 ዙር = 2. ከዚህ በላይ ማድረግ ካስፈለገ .env ውስጥ MAX_DAILY_SESSIONS ቀይር።
@@ -225,11 +242,30 @@ def record_attendance(
             "data": None,
         }
 
-    distance = calculate_distance(request.user_lat, request.user_lon, COMPANY_LAT, COMPANY_LON)
-    if distance > ALLOWED_RADIUS_METERS:
+    if is_desktop_device(device_info):
         return {
             "status": "error",
-            "message": f"ካምፑ አካባቢ አይደለህም (አሁን ካለህበት {int(distance)} ሜትር ይርቃል)። ወደ ካምፑ ግቢ ገብተህ እንደገና ሞክር።",
+            "message": (
+                "Check-in/Check-out የሚፈቀደው ከስልክ (phone) ብቻ ነው - ኮምፒውተር/ላፕቶፕ ላይ GPS "
+                "ስለሌለ ትክክለኛ አካባቢህን ማወቅ አንችልም። እባክህ ስልክህን ተጠቅመህ እንደገና ሞክር።"
+            ),
+            "data": None,
+        }
+
+    distance = calculate_distance(request.user_lat, request.user_lon, COMPANY_LAT, COMPANY_LON)
+    if distance > ALLOWED_RADIUS_METERS:
+        # NEW: accuracy_meters ን (ካለ) message ላይ እንጨምራለን - "far away" ስህተት
+        # በትክክል ከተሳሳተ COMPANY_LAT/LON ፒን ነው ወይስ ደካማ GPS reading (በተለይ ህንፃ
+        # ውስጥ WiFi/cell-tower ላይ ተመስርቶ ሲሰላ) የመጣ እንደሆነ በቀላሉ ለመለየት ይረዳል።
+        accuracy_note = ""
+        if request.accuracy_meters is not None:
+            accuracy_note = f" (የስልክህ GPS ትክክለኛነት ±{int(request.accuracy_meters)} ሜትር ነው)"
+        return {
+            "status": "error",
+            "message": (
+                f"ካምፑ አካባቢ አይደለህም (አሁን ካለህበት {int(distance)} ሜትር ይርቃል{accuracy_note})። "
+                "ወደ ካምፑ ግቢ ገብተህ እንደገና ሞክር።"
+            ),
             "data": None,
         }
 
