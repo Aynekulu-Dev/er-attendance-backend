@@ -1,14 +1,27 @@
 import os
 import csv
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from . import models, schemas
 import math
 
 # --- 1. GEOFENCING CONSTANTS ---
-COMPANY_LAT = float(os.getenv("COMPANY_LAT", "9.007923"))
+COMPANY_LAT = float(os.getenv("COMPANY_LAT", "9.012345"))
 COMPANY_LON = float(os.getenv("COMPANY_LON", "38.754321"))
+# NEW: "ቀን" (date) ስሌት ትክክለኛ የ Addis Ababa local ቀን መጠቀም አለበት እንጂ server's
+# clock (Render cloud ላይ ሁልጊዜ UTC ነው) አይደለም። ኢትዮጵያ UTC+3 ነው (DST የለም) -
+# ስለዚህ fixed offset በቂ ነው፣ IANA tzdata database ላይ ጥገኛ መሆን አያስፈልግም (ያ
+# database Render's minimal container ውስጥ ላይኖር ይችላል)። ይህ ካልተስተካከለ፣
+# UTC midnight (= Addis ሌሊት 3 ሰዓት) አካባቢ የሚሰራ ሰው በተሳሳተ ቀን ስር ሊመዘገብ ይችላል
+# (daily session limit እና weekly certificate day-counting ላይ ተጽእኖ ያመጣል)።
+ETHIOPIA_TZ = timezone(timedelta(hours=3))
+
+
+def today_in_addis() -> date:
+    return datetime.now(ETHIOPIA_TZ).date()
+
+
 ALLOWED_RADIUS_METERS = float(os.getenv("ALLOWED_RADIUS_METERS", "5000"))
 
 # NEW: check-in/check-out ስልክ ላይ ብቻ (mobile only) እንዲፈቀድ - PC/laptop browser ላይ
@@ -31,6 +44,11 @@ def is_desktop_device(user_agent: str) -> bool:
 # NEW: በቀን ስንት ዙር (check-in→check-out cycle) እንደሚፈቀድ - ለምሳሌ ጠዋት 1 ዙር +
 # ከሰዓት 1 ዙር = 2. ከዚህ በላይ ማድረግ ካስፈለገ .env ውስጥ MAX_DAILY_SESSIONS ቀይር።
 MAX_DAILY_SESSIONS = int(os.getenv("MAX_DAILY_SESSIONS", "2"))
+
+# NEW: GPS accuracy ከዚህ በላይ (ሜትር) ከሆነ፣ "Settings ላይ High accuracy አብራ"
+# የሚል ጠቃሚ ምክር error message ላይ እንጨምራለን - ስልኩ እውነተኛ GPS ፈጽሞ
+# ያላገኘ ስለሚመስል።
+POOR_ACCURACY_HINT_THRESHOLD_METERS = float(os.getenv("POOR_ACCURACY_HINT_THRESHOLD_METERS", "300"))
 
 # --- 2. ራስ-ሰር የ CSV BACKUP ፎልደር ማዘጋጃ ---
 BACKUP_DIR = "backups"
@@ -160,8 +178,11 @@ def get_current_week_number(db: Session) -> int:
     if not first_volunteer:
         return 1
 
-    start_date = first_volunteer.registered_at.date()
-    today = date.today()
+    # registered_at የተቀመጠው naive UTC datetime ነው (models.py: datetime.utcnow) -
+    # ወደ Addis Ababa local ቀን ለመቀየር በመጀመሪያ UTC ብለን መለያት (tzinfo መስጠት)
+    # ያስፈልጋል፣ ከዚያ ወደ ETHIOPIA_TZ እንቀይራለን።
+    start_date = first_volunteer.registered_at.replace(tzinfo=timezone.utc).astimezone(ETHIOPIA_TZ).date()
+    today = today_in_addis()
     days_passed = (today - start_date).days
 
     week_number = (days_passed // 7) + 1
@@ -257,19 +278,29 @@ def record_attendance(
         # NEW: accuracy_meters ን (ካለ) message ላይ እንጨምራለን - "far away" ስህተት
         # በትክክል ከተሳሳተ COMPANY_LAT/LON ፒን ነው ወይስ ደካማ GPS reading (በተለይ ህንፃ
         # ውስጥ WiFi/cell-tower ላይ ተመስርቶ ሲሰላ) የመጣ እንደሆነ በቀላሉ ለመለየት ይረዳል።
+        # POOR_ACCURACY_HINT_THRESHOLD ን ካለፈ (ማለት ስልኩ እውነተኛ GPS ፈጽሞ
+        # ያላገኘ ይመስላል)፣ ተጠቃሚው ስልኩ Location Settings ውስጥ "High accuracy"/
+        # "Precise location" እንዲያበራ ወደ VolunteerPage ላይ ያለው in-app የእርዳታ
+        # ክፍል እንዲያይ እንመራዋለን።
         accuracy_note = ""
+        accuracy_tip = ""
         if request.accuracy_meters is not None:
             accuracy_note = f" (የስልክህ GPS ትክክለኛነት ±{int(request.accuracy_meters)} ሜትር ነው)"
+            if request.accuracy_meters > POOR_ACCURACY_HINT_THRESHOLD_METERS:
+                accuracy_tip = (
+                    " የስልክህ GPS ትክክለኛነት ደካማ ይመስላል - ከታች ያለውን 'GPS ትክክለኛ ካልሆነ?' "
+                    "የሚለውን ተጫንና መመሪያውን ተከተል።"
+                )
         return {
             "status": "error",
             "message": (
                 f"ካምፑ አካባቢ አይደለህም (አሁን ካለህበት {int(distance)} ሜትር ይርቃል{accuracy_note})። "
-                "ወደ ካምፑ ግቢ ገብተህ እንደገና ሞክር።"
+                f"ወደ ካምፑ ግቢ ገብተህ እንደገና ሞክር።{accuracy_tip}"
             ),
             "data": None,
         }
 
-    today_str = date.today().isoformat()
+    today_str = today_in_addis().isoformat()
     current_week = get_current_week_number(db)
 
     # NEW: ከ1 ይልቅ ዛሬ ያሉትን ሁሉንም records እናመጣለን (እስከ MAX_DAILY_SESSIONS ድረስ
@@ -383,7 +414,7 @@ def record_attendance(
 def get_dashboard_analytics(db: Session) -> schemas.DashboardAnalytics:
     total_volunteers = db.query(models.Volunteer).count()
 
-    today_str = date.today().isoformat()
+    today_str = today_in_addis().isoformat()
 
     today_checkins = db.query(models.Attendance).filter(
         models.Attendance.date == today_str,
