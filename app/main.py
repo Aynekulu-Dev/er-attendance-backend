@@ -30,15 +30,16 @@ app.add_middleware(
 )
 
 # --- PROGRAM END GATE ---
-# ካምፑ ካለቀ በኋላ (ከዚህ ሰዓት/ቀን በኋላ) አዲስ admin login እና volunteer
-# check-in/check-out እንዳይሆኑ የሚያግድ middleware። ኢትዮጵያ DST ስለሌላት
-# ቋሚ UTC+3 offset መጠቀም ከ zoneinfo/tzdata ጥገኝነት ያድነናል።
+# ካምፑ ካለቀ በኋላ (ከዚህ ሰዓት/ቀን በኋላ) ሙሉ ስርዓቱን የሚያግድ middleware - admin
+# login፣ dashboard (analytics/log/CSV export ጨምሮ)፣ volunteer register/
+# edit/delete፣ check-in/check-out - ሁሉም። ኢትዮጵያ DST ስለሌላት ቋሚ UTC+3
+# offset መጠቀም ከ zoneinfo/tzdata ጥገኝነት ያድነናል።
 ETHIOPIA_TZ = timezone(timedelta(hours=3))
 
-# ነባሪ፡ ዛሬ ማታ (ኢትዮጵያዊ) 11 ሰዓት = ምዕራባዊ አቆጣጠር ረቡዕ መስከረም 5, 2026 ጥዋት 5:00።
-# በ PROGRAM_END_AT env var (ISO format, ለምሳሌ "2026-09-05T05:00:00+03:00")
+# ነባሪ፡ ግሪጎሪያዊ (ምዕራባዊ) አቆጣጠር አርብ መስከረም 4, 2026 ከሰዓት 11:00 (5:00pm)።
+# በ PROGRAM_END_AT env var (ISO format, ለምሳሌ "2026-09-04T17:00:00+03:00")
 # መቀየር ይቻላል፣ ያለዚያ ይሄው ነባሪ ጥቅም ላይ ይውላል።
-_default_program_end = datetime(2026, 9, 5, 5, 0, 0, tzinfo=ETHIOPIA_TZ)
+_default_program_end = datetime(2026, 9, 4, 17, 0, 0, tzinfo=ETHIOPIA_TZ)
 _env_program_end = os.getenv("PROGRAM_END_AT")
 try:
     PROGRAM_END_AT = (
@@ -53,19 +54,19 @@ PROGRAM_ENDED_MESSAGE = (
     "ፕሮግራሙ አልቋል። እስካሁን ለነበረን ጊዜ እናመሰግናለን! 🙏"
 )
 
-# (HTTP method, path) ጥንዶች ካምፑ ካለቀ በኋላ መዘጋት ያለባቸው - አዲስ admin login
-# እና volunteer check-in/check-out ብቻ። ቀድሞ የገባ admin ግን ነባር dashboard
-# (analytics, attendance log, CSV export) ማየት/ማውረድ ይችላል ምክንያቱም ያ ራሱ
-# "አዲስ መግባት" ስላልሆነ - ካምፑ ካለቀ በኋላም ውጤቱን መገምገም ያስፈልጋልና።
-_LOCKED_AFTER_END = {
-    ("POST", "/api/admin/login"),
-    ("POST", "/api/attendance"),
+# ካምፑ ካለቀ በኋላም ክፍት መቆየት ያለባቸው ብቸኛ paths - frontend ራሱ "ፕሮግራሙ አልቋል"
+# የሚለውን ገፅ ለማሳየት ይህን endpoint ማንበብ ስለሚያስፈልገው (chicken-and-egg ላለመፍጠር)፣
+# እና root health-check። ከዚህ ውጪ ያለው ሁሉም (login, dashboard, volunteers
+# CRUD, attendance, analytics, log, export) ይዘጋል።
+_ALWAYS_OPEN_PATHS = {
+    "/",
+    "/api/program-status",
 }
 
 
 @app.middleware("http")
 async def program_end_gate(request: Request, call_next):
-    if (request.method, request.url.path) in _LOCKED_AFTER_END:
+    if request.url.path not in _ALWAYS_OPEN_PATHS:
         if datetime.now(ETHIOPIA_TZ) >= PROGRAM_END_AT:
             # NOTE: raising HTTPException here would NOT be caught by FastAPI's
             # exception handler (middleware sits outside that layer), so we
