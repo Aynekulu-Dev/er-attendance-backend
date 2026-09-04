@@ -147,6 +147,20 @@ def root():
     return {"message": "Ethiopia Reads Attendance API is running."}
 
 
+# NEW: public, no-auth endpoint so both the admin dashboard and the volunteer
+# page can show a live countdown to the program-end gate above, instead of
+# hardcoding the cutoff separately in the frontend (single source of truth -
+# if PROGRAM_END_AT ever changes via env var, the countdown updates itself).
+@app.get("/api/program-status")
+def program_status():
+    now = datetime.now(ETHIOPIA_TZ)
+    return {
+        "ends_at": PROGRAM_END_AT.isoformat(),
+        "server_time": now.isoformat(),
+        "ended": now >= PROGRAM_END_AT,
+    }
+
+
 @app.post("/api/admin/login", response_model=schemas.Token)
 def login_admin(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     admin = db.query(models.AdminUser).filter(models.AdminUser.username == form_data.username).first()
